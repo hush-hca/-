@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crypto Pure Alpha Dashboard</title>
+  <style>
+    :root {
+      --bg: #111417;
+      --panel: #181d22;
+      --soft: #20262d;
+      --text: #edf2f4;
+      --muted: #aab4bd;
+      --line: #303841;
+      --green: #21c17a;
+      --red: #ff5b6b;
+      --blue: #63a4ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    header {
+      padding: 26px 32px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #15191e;
+    }
+    h1 { margin: 0; font-size: 24px; line-height: 1.2; }
+    .subhead { margin-top: 8px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    main {
+      width: min(1480px, calc(100vw - 40px));
+      margin: 22px auto 44px;
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .controls { padding: 18px; position: sticky; top: 16px; }
+    .control { margin-bottom: 15px; }
+    label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+    input {
+      width: 100%;
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #101316;
+      color: var(--text);
+      padding: 0 10px;
+      font-size: 14px;
+    }
+    button {
+      width: 100%;
+      height: 42px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #07101c;
+      font-weight: 760;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.62; cursor: wait; }
+    .status { margin-top: 13px; min-height: 20px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .metric {
+      padding: 15px 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .metric span { display: block; color: var(--muted); font-size: 12px; font-weight: 680; text-transform: uppercase; }
+    .metric strong { display: block; margin-top: 8px; font-size: 20px; line-height: 1.1; }
+    .section { margin-bottom: 18px; }
+    .title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .title h2 { margin: 0; font-size: 15px; }
+    .title small { color: var(--muted); font-size: 12px; text-align: right; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; font-size: 13px; }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: right;
+      white-space: nowrap;
+    }
+    th:first-child, td:first-child, th:nth-child(4), td:nth-child(4) { text-align: left; }
+    th { color: var(--muted); background: #151a1f; font-size: 11px; text-transform: uppercase; }
+    tbody tr:hover { background: var(--soft); }
+    .long, .positive { color: var(--green); }
+    .short, .negative { color: var(--red); }
+    .long, .short { font-weight: 720; }
+    .error { display: none; margin-bottom: 18px; padding: 14px 16px; border-color: rgba(255, 91, 107, 0.55); color: #ffd3d8; line-height: 1.45; }
+    .empty { padding: 32px 16px; color: var(--muted); text-align: center; }
+    .bars { padding: 12px 16px 18px; }
+    .bar-row { display: grid; grid-template-columns: 132px 1fr 88px; gap: 10px; align-items: center; min-height: 28px; font-size: 12px; }
+    .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { height: 10px; background: #0f1215; border: 1px solid #252c34; border-radius: 999px; overflow: hidden; position: relative; }
+    .bar-fill { position: absolute; inset-block: 0; left: 50%; background: var(--green); }
+    .bar-fill.neg { left: auto; right: 50%; background: var(--red); }
+    .bar-value { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    @media (max-width: 980px) {
+      header { padding: 22px 20px 16px; }
+      main { width: min(100vw - 24px, 920px); grid-template-columns: 1fr; }
+      .controls { position: static; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 560px) { .metrics { grid-template-columns: 1fr; } h1 { font-size: 21px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Crypto Pure Alpha Long/Short Screener</h1>
+    <div class="subhead">Binance USD-M futures dashboard that strips BTC/ETH beta from hourly altcoin returns and ranks residual alpha with funding filters.</div>
+  </header>
+  <main>
+    <aside class="panel controls">
+      <div class="control"><label for="universeSize"><span>Universe Size</span><span>Top volume</span></label><input id="universeSize" type="number" min="10" max="100" value="50" /></div>
+      <div class="control"><label for="lookbackHours"><span>Lookback Hours</span><span>Regression</span></label><input id="lookbackHours" type="number" min="24" max="96" value="48" /></div>
+      <div class="control"><label for="minObs"><span>Min Observations</span><span>OLS</span></label><input id="minObs" type="number" min="12" max="96" value="24" /></div>
+      <div class="control"><label for="topN"><span>Signals Per Side</span><span>Long / Short</span></label><input id="topN" type="number" min="1" max="10" value="5" /></div>
+      <div class="control"><label for="maxLongFunding"><span>Max Long Funding</span><span>Decimal</span></label><input id="maxLongFunding" type="number" step="0.0001" value="0.0005" /></div>
+      <div class="control"><label for="minShortFunding"><span>Min Short Funding</span><span>Decimal</span></label><input id="minShortFunding" type="number" step="0.0001" value="-0.0005" /></div>
+      <button id="runButton" type="button">Run Screener</button>
+      <div id="status" class="status">Ready.</div>
+    </aside>
+    <section>
+      <div class="metrics">
+        <div class="metric"><span>Universe</span><strong id="metricUniverse">-</strong></div>
+        <div class="metric"><span>Regression Window</span><strong id="metricWindow">-</strong></div>
+        <div class="metric"><span>Latest Hour UTC</span><strong id="metricHour">-</strong></div>
+        <div class="metric"><span>Runtime</span><strong id="metricRuntime">-</strong></div>
+      </div>
+      <div id="errorBox" class="panel error"></div>
+      <div class="panel section">
+        <div class="title"><h2>Pair Trading Execution Table</h2><small id="signalCount">No scan yet</small></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Ticker</th><th>Residual</th><th>Funding</th><th>Action</th><th>Actual Return</th><th>Fitted Return</th><th>Beta BTC</th><th>Beta ETH</th><th>R2</th><th>Obs</th></tr></thead>
+            <tbody id="signalsBody"><tr><td colspan="10" class="empty">Click Run Screener to fetch live Binance futures data.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel section">
+        <div class="title"><h2>Residual Ranking</h2><small>Top and bottom residuals</small></div>
+        <div id="bars" class="bars"><div class="empty">No residuals loaded.</div></div>
+      </div>
+      <div class="panel section">
+        <div class="title"><h2>Full Residual Table</h2><small id="residualCount">No scan yet</small></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Ticker</th><th>Residual</th><th>Funding</th><th>Actual Return</th><th>Fitted Return</th><th>Beta BTC</th><th>Beta ETH</th><th>R2</th><th>Long Eligible</th><th>Short Eligible</th></tr></thead>
+            <tbody id="residualsBody"><tr><td colspan="10" class="empty">No residuals loaded.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const pct = (v) => v === null || v === undefined || Number.isNaN(Number(v)) ? "n/a" : `${(Number(v) * 100).toFixed(4)}%`;
+    const num = (v, d = 3) => v === null || v === undefined || Number.isNaN(Number(v)) ? "n/a" : Number(v).toFixed(d);
+    const cls = (v) => v === null || v === undefined || Number.isNaN(Number(v)) ? "" : Number(v) >= 0 ? "positive" : "negative";
+    function signalRow(row) {
+      const actionClass = row.Action === "Long" ? "long" : "short";
+      return `<tr><td>${row.Ticker}</td><td class="${cls(row.Residual)}">${pct(row.Residual)}</td><td class="${cls(row.FundingRate)}">${pct(row.FundingRate)}</td><td class="${actionClass}">${row.Action}</td><td class="${cls(row.ActualReturn)}">${pct(row.ActualReturn)}</td><td class="${cls(row.FittedReturn)}">${pct(row.FittedReturn)}</td><td>${num(row.BetaBTC)}</td><td>${num(row.BetaETH)}</td><td>${num(row.RSquared)}</td><td>${row.Observations ?? ""}</td></tr>`;
+    }
+    function residualRow(row) {
+      return `<tr><td>${row.Ticker}</td><td class="${cls(row.Residual)}">${pct(row.Residual)}</td><td class="${cls(row.FundingRate)}">${pct(row.FundingRate)}</td><td class="${cls(row.ActualReturn)}">${pct(row.ActualReturn)}</td><td class="${cls(row.FittedReturn)}">${pct(row.FittedReturn)}</td><td>${num(row.BetaBTC)}</td><td>${num(row.BetaETH)}</td><td>${num(row.RSquared)}</td><td>${row.LongEligible ? "Yes" : "No"}</td><td>${row.ShortEligible ? "Yes" : "No"}</td></tr>`;
+    }
+    function renderBars(rows) {
+      const chosen = [...rows.slice(0, 10), ...rows.slice(Math.max(rows.length - 10, 10))];
+      const maxAbs = Math.max(...chosen.map((r) => Math.abs(Number(r.Residual || 0))), 0.000001);
+      $("bars").innerHTML = chosen.map((row) => {
+        const value = Number(row.Residual || 0);
+        const width = Math.max(2, Math.abs(value) / maxAbs * 50);
+        const neg = value < 0;
+        return `<div class="bar-row"><div class="bar-label">${row.Ticker}</div><div class="bar-track"><div class="bar-fill ${neg ? "neg" : ""}" style="width:${width}%"></div></div><div class="bar-value ${cls(value)}">${pct(value)}</div></div>`;
+      }).join("");
+    }
+    async function runScreener() {
+      const button = $("runButton");
+      button.disabled = true;
+      $("status").textContent = "Fetching Binance futures data and running regressions...";
+      $("errorBox").style.display = "none";
+      const params = new URLSearchParams({
+        universe_size: $("universeSize").value,
+        lookback_hours: $("lookbackHours").value,
+        min_regression_obs: $("minObs").value,
+        top_n: $("topN").value,
+        max_long_funding: $("maxLongFunding").value,
+        min_short_funding: $("minShortFunding").value,
+      });
+      try {
+        const response = await fetch(`/api/run?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        $("metricUniverse").textContent = payload.meta.universe_size;
+        $("metricWindow").textContent = `${payload.meta.lookback_hours}h`;
+        $("metricHour").textContent = payload.meta.latest_hour_utc || "-";
+        $("metricRuntime").textContent = `${payload.meta.runtime_seconds.toFixed(1)}s`;
+        $("signalsBody").innerHTML = payload.signals.length ? payload.signals.map(signalRow).join("") : `<tr><td colspan="10" class="empty">No signals passed the filters.</td></tr>`;
+        $("residualsBody").innerHTML = payload.residuals.length ? payload.residuals.map(residualRow).join("") : `<tr><td colspan="10" class="empty">No residuals produced.</td></tr>`;
+        $("signalCount").textContent = `${payload.signals.length} selected`;
+        $("residualCount").textContent = `${payload.residuals.length} assets`;
+        renderBars(payload.residuals);
+        $("status").textContent = "Scan complete.";
+      } catch (error) {
+        $("errorBox").style.display = "block";
+        $("errorBox").textContent = error.message;
+        $("status").textContent = "Scan failed.";
+      } finally {
+        button.disabled = false;
+      }
+    }
+    $("runButton").addEventListener("click", runScreener);
+  </script>
+</body>
+</html>
