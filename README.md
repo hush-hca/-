@@ -4,12 +4,10 @@ Python tools for screening Binance USD-M futures altcoins by BTC/ETH beta-neutra
 
 ## Files
 
-- `index.html` - Vercel/static dashboard entrypoint.
-- `api/run.py` - Vercel Python serverless API for live scans.
+- `index.html` - Vercel/static dashboard entrypoint. Binance requests run in the user's browser to avoid server-side location restrictions.
 - `outputs/crypto_pure_alpha_screener.py` - CLI screener.
 - `outputs/crypto_pure_alpha_dashboard.py` - local web dashboard.
 - `outputs/requirements_pure_alpha_dashboard.txt` - Python dependencies.
-- `requirements.txt` - Vercel deployment dependencies.
 
 ## Install
 
@@ -37,7 +35,7 @@ http://127.0.0.1:8080
 
 ## Deploy on Vercel
 
-The repository includes `index.html`, `api/run.py`, `requirements.txt`, and `vercel.json`, so Vercel can serve the dashboard at `/` and the live screener API at `/api/run`.
+The deployed app is a static `index.html`. It calls Binance Futures public endpoints directly from the browser, avoiding Vercel serverless IP restrictions that can trigger Binance HTTP 451 responses.
 
 ## Notes
 

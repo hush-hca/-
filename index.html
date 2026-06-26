@@ -187,6 +187,14 @@
     const pct = (v) => v === null || v === undefined || Number.isNaN(Number(v)) ? "n/a" : `${(Number(v) * 100).toFixed(4)}%`;
     const num = (v, d = 3) => v === null || v === undefined || Number.isNaN(Number(v)) ? "n/a" : Number(v).toFixed(d);
     const cls = (v) => v === null || v === undefined || Number.isNaN(Number(v)) ? "" : Number(v) >= 0 ? "positive" : "negative";
+    const BINANCE_BASES = [
+      "https://fapi.binance.com",
+      "https://fapi1.binance.com",
+      "https://fapi2.binance.com",
+      "https://fapi3.binance.com"
+    ];
+    const STABLE_BASES = new Set(["USDT", "USDC", "BUSD", "FDUSD", "DAI", "TUSD", "USDP", "GUSD", "EUR", "EURI", "AEUR", "TRY", "BRL", "GBP", "AUD", "JPY"]);
+
     function signalRow(row) {
       const actionClass = row.Action === "Long" ? "long" : "short";
       return `<tr><td>${row.Ticker}</td><td class="${cls(row.Residual)}">${pct(row.Residual)}</td><td class="${cls(row.FundingRate)}">${pct(row.FundingRate)}</td><td class="${actionClass}">${row.Action}</td><td class="${cls(row.ActualReturn)}">${pct(row.ActualReturn)}</td><td class="${cls(row.FittedReturn)}">${pct(row.FittedReturn)}</td><td>${num(row.BetaBTC)}</td><td>${num(row.BetaETH)}</td><td>${num(row.RSquared)}</td><td>${row.Observations ?? ""}</td></tr>`;
@@ -204,23 +212,259 @@
         return `<div class="bar-row"><div class="bar-label">${row.Ticker}</div><div class="bar-track"><div class="bar-fill ${neg ? "neg" : ""}" style="width:${width}%"></div></div><div class="bar-value ${cls(value)}">${pct(value)}</div></div>`;
       }).join("");
     }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, Number(value)));
+    }
+
+    async function fetchBinanceJson(path) {
+      const errors = [];
+      for (const base of BINANCE_BASES) {
+        try {
+          const response = await fetch(`${base}${path}`, { cache: "no-store" });
+          if (!response.ok) {
+            const body = await response.text();
+            errors.push(`${base}: HTTP ${response.status} ${body.slice(0, 160)}`);
+            continue;
+          }
+          return await response.json();
+        } catch (error) {
+          errors.push(`${base}: ${error.message}`);
+        }
+      }
+      throw new Error(`Binance public API request failed from this browser. ${errors.join(" | ")}`);
+    }
+
+    async function mapLimit(items, limit, worker, onProgress) {
+      const results = new Array(items.length);
+      let next = 0;
+      let done = 0;
+      async function runWorker() {
+        while (next < items.length) {
+          const index = next++;
+          results[index] = await worker(items[index], index);
+          done += 1;
+          if (onProgress) onProgress(done, items.length);
+          await sleep(25);
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runWorker));
+      return results;
+    }
+
+    function isEligibleMarket(symbolInfo) {
+      return symbolInfo.status === "TRADING"
+        && symbolInfo.contractType === "PERPETUAL"
+        && symbolInfo.quoteAsset === "USDT"
+        && symbolInfo.marginAsset === "USDT"
+        && !STABLE_BASES.has(symbolInfo.baseAsset)
+        && symbolInfo.baseAsset !== "BTC"
+        && symbolInfo.baseAsset !== "ETH";
+    }
+
+    async function fetchUniverse(universeSize) {
+      $("status").textContent = "Loading Binance futures exchange info...";
+      const [exchangeInfo, tickers] = await Promise.all([
+        fetchBinanceJson("/fapi/v1/exchangeInfo"),
+        fetchBinanceJson("/fapi/v1/ticker/24hr")
+      ]);
+      const eligible = new Map(exchangeInfo.symbols.filter(isEligibleMarket).map((item) => [item.symbol, item]));
+      return tickers
+        .filter((ticker) => eligible.has(ticker.symbol))
+        .map((ticker) => ({ symbol: ticker.symbol, quoteVolume: Number(ticker.quoteVolume || 0) }))
+        .filter((row) => Number.isFinite(row.quoteVolume))
+        .sort((a, b) => b.quoteVolume - a.quoteVolume)
+        .slice(0, universeSize)
+        .map((row) => row.symbol);
+    }
+
+    async function fetchCloseSeries(symbol, lookbackHours) {
+      const limit = lookbackHours + 5;
+      const klines = await fetchBinanceJson(`/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=1h&limit=${limit}`);
+      return klines.map((bar) => ({
+        time: Number(bar[0]),
+        close: Number(bar[4])
+      })).filter((row) => Number.isFinite(row.time) && Number.isFinite(row.close));
+    }
+
+    function returnsByTime(closes) {
+      const returns = new Map();
+      for (let i = 1; i < closes.length; i += 1) {
+        const previous = closes[i - 1].close;
+        const current = closes[i].close;
+        if (previous > 0 && current > 0) {
+          returns.set(closes[i].time, current / previous - 1);
+        }
+      }
+      return returns;
+    }
+
+    function solve3(matrix, vector) {
+      const a = matrix.map((row, idx) => [...row, vector[idx]]);
+      for (let col = 0; col < 3; col += 1) {
+        let pivot = col;
+        for (let row = col + 1; row < 3; row += 1) {
+          if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+        }
+        if (Math.abs(a[pivot][col]) < 1e-12) return null;
+        [a[col], a[pivot]] = [a[pivot], a[col]];
+        const div = a[col][col];
+        for (let k = col; k < 4; k += 1) a[col][k] /= div;
+        for (let row = 0; row < 3; row += 1) {
+          if (row === col) continue;
+          const factor = a[row][col];
+          for (let k = col; k < 4; k += 1) a[row][k] -= factor * a[col][k];
+        }
+      }
+      return [a[0][3], a[1][3], a[2][3]];
+    }
+
+    function regressResidual(symbol, assetReturns, btcReturns, ethReturns, lookbackHours, minObs) {
+      const sample = [...assetReturns.entries()]
+        .filter(([time]) => btcReturns.has(time) && ethReturns.has(time))
+        .sort((a, b) => a[0] - b[0])
+        .slice(-lookbackHours)
+        .map(([time, y]) => ({ time, y, btc: btcReturns.get(time), eth: ethReturns.get(time) }));
+
+      if (sample.length < minObs) return null;
+
+      const xtx = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      const xty = [0, 0, 0];
+      for (const row of sample) {
+        const x = [1, row.btc, row.eth];
+        for (let i = 0; i < 3; i += 1) {
+          xty[i] += x[i] * row.y;
+          for (let j = 0; j < 3; j += 1) xtx[i][j] += x[i] * x[j];
+        }
+      }
+
+      const beta = solve3(xtx, xty);
+      if (!beta) return null;
+
+      const yMean = sample.reduce((sum, row) => sum + row.y, 0) / sample.length;
+      let sse = 0;
+      let sst = 0;
+      for (const row of sample) {
+        const fitted = beta[0] + beta[1] * row.btc + beta[2] * row.eth;
+        sse += (row.y - fitted) ** 2;
+        sst += (row.y - yMean) ** 2;
+      }
+
+      const latest = sample[sample.length - 1];
+      const fittedLatest = beta[0] + beta[1] * latest.btc + beta[2] * latest.eth;
+      return {
+        Ticker: symbol,
+        Residual: latest.y - fittedLatest,
+        FundingRate: null,
+        ActualReturn: latest.y,
+        FittedReturn: fittedLatest,
+        BetaBTC: beta[1],
+        BetaETH: beta[2],
+        RSquared: sst > 0 ? 1 - sse / sst : null,
+        Observations: sample.length,
+        LastReturnHourUTC: new Date(latest.time).toISOString()
+      };
+    }
+
+    async function fetchFundingMap() {
+      const payload = await fetchBinanceJson("/fapi/v1/premiumIndex");
+      const rows = Array.isArray(payload) ? payload : [payload];
+      return new Map(rows.map((row) => [row.symbol, Number(row.lastFundingRate)]));
+    }
+
+    function scoreAndSelect(residuals, topN, maxLongFunding, minShortFunding) {
+      const scored = residuals.map((row) => {
+        const funding = Number.isFinite(row.FundingRate) ? row.FundingRate : null;
+        const longPenalty = funding !== null ? Math.max(funding, 0) * 2 : 0;
+        const shortPenalty = funding !== null ? Math.max(-funding, 0) * 2 : 0;
+        return {
+          ...row,
+          LongEligible: funding === null || funding <= maxLongFunding,
+          ShortEligible: funding === null || funding >= minShortFunding,
+          LongScore: row.Residual - longPenalty,
+          ShortScore: row.Residual + shortPenalty
+        };
+      }).sort((a, b) => b.Residual - a.Residual);
+
+      const longs = scored
+        .filter((row) => row.Residual > 0 && row.LongEligible)
+        .sort((a, b) => b.LongScore - a.LongScore || b.Residual - a.Residual)
+        .slice(0, topN)
+        .map((row) => ({ ...row, Action: "Long" }));
+
+      const shorts = scored
+        .filter((row) => row.Residual < 0 && row.ShortEligible)
+        .sort((a, b) => a.ShortScore - b.ShortScore || a.Residual - b.Residual)
+        .slice(0, topN)
+        .map((row) => ({ ...row, Action: "Short" }));
+
+      return { scored, signals: [...longs, ...shorts] };
+    }
+
+    async function runClientSideScan() {
+      const started = performance.now();
+      const universeSize = clamp($("universeSize").value, 10, 100);
+      const lookbackHours = clamp($("lookbackHours").value, 24, 96);
+      const minObs = clamp($("minObs").value, 12, lookbackHours);
+      const topN = clamp($("topN").value, 1, 10);
+      const maxLongFunding = Number($("maxLongFunding").value);
+      const minShortFunding = Number($("minShortFunding").value);
+
+      const universe = await fetchUniverse(universeSize);
+      const symbols = ["BTCUSDT", "ETHUSDT", ...universe];
+      $("status").textContent = `Fetching ${symbols.length} hourly kline series from your browser...`;
+      const closeRows = await mapLimit(
+        symbols,
+        8,
+        (symbol) => fetchCloseSeries(symbol, lookbackHours),
+        (done, total) => {
+          $("status").textContent = `Fetching hourly klines ${done}/${total}...`;
+        }
+      );
+
+      const closeMap = new Map(symbols.map((symbol, index) => [symbol, closeRows[index]]));
+      const btcReturns = returnsByTime(closeMap.get("BTCUSDT") || []);
+      const ethReturns = returnsByTime(closeMap.get("ETHUSDT") || []);
+      if (btcReturns.size < minObs || ethReturns.size < minObs) {
+        throw new Error("BTC/ETH benchmark history is insufficient for regression.");
+      }
+
+      $("status").textContent = "Fetching funding rates and computing residuals...";
+      const fundingMap = await fetchFundingMap();
+      const residuals = universe
+        .map((symbol) => regressResidual(symbol, returnsByTime(closeMap.get(symbol) || []), btcReturns, ethReturns, lookbackHours, minObs))
+        .filter(Boolean)
+        .map((row) => ({ ...row, FundingRate: Number.isFinite(fundingMap.get(row.Ticker)) ? fundingMap.get(row.Ticker) : null }));
+
+      if (!residuals.length) {
+        throw new Error("No valid residuals produced. Try lowering Min Observations or Universe Size.");
+      }
+
+      const { scored, signals } = scoreAndSelect(residuals, topN, maxLongFunding, minShortFunding);
+      return {
+        ok: true,
+        meta: {
+          universe_size: universe.length,
+          lookback_hours: lookbackHours,
+          latest_hour_utc: scored[0]?.LastReturnHourUTC || null,
+          runtime_seconds: (performance.now() - started) / 1000
+        },
+        signals,
+        residuals: scored
+      };
+    }
+
     async function runScreener() {
       const button = $("runButton");
       button.disabled = true;
-      $("status").textContent = "Fetching Binance futures data and running regressions...";
+      $("status").textContent = "Fetching Binance futures data from your browser...";
       $("errorBox").style.display = "none";
-      const params = new URLSearchParams({
-        universe_size: $("universeSize").value,
-        lookback_hours: $("lookbackHours").value,
-        min_regression_obs: $("minObs").value,
-        top_n: $("topN").value,
-        max_long_funding: $("maxLongFunding").value,
-        min_short_funding: $("minShortFunding").value,
-      });
       try {
-        const response = await fetch(`/api/run?${params.toString()}`);
-        const payload = await response.json();
-        if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        const payload = await runClientSideScan();
         $("metricUniverse").textContent = payload.meta.universe_size;
         $("metricWindow").textContent = `${payload.meta.lookback_hours}h`;
         $("metricHour").textContent = payload.meta.latest_hour_utc || "-";
